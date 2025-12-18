@@ -1,0 +1,18 @@
+{
+  "name": "aim-server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "description": "",
+  "dependencies": {
+    "nanoid": "^5.1.6",
+    "nodemon": "^3.1.11",
+    "ws": "^8.18.3"
+  }
+}
