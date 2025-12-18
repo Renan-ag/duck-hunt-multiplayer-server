@@ -1,7 +1,8 @@
 import { WebSocketServer } from "ws";
 import { nanoid } from "nanoid";
 
-const wss = new WebSocketServer({ port: 8080 });
+const PORT = process.env.PORT ? Number(process.env.PORT) : 8080;
+const wss = new WebSocketServer({ port: PORT });
 
 const rooms = new Map();
 
