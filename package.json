@@ -5,8 +5,8 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "dev": "tsx src/server.ts",
+    "build": "node build.mjs",
     "start": "node dist/server.js"
   },
   "dependencies": {
@@ -15,7 +15,8 @@
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
-    "typescript": "^5.4.0",
-    "tsx": "^4.15.0"
+    "esbuild": "^0.20.2",
+    "tsx": "^4.15.0",
+    "typescript": "^5.4.0"
   }
 }
