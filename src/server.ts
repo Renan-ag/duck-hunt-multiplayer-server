@@ -1,21 +1,23 @@
-import { WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer } from "ws";
 import { nanoid } from "nanoid";
 import { roomManager } from "./roomManager";
+import { ClientSession } from "./types";
 
 const PORT = Number(process.env.PORT) || 8080;
 const wss = new WebSocketServer({ port: PORT });
 
-/**
- * clientId → WebSocket
- */
-const connections = new Map<string, WebSocket>();
+const clients = new Map<string, ClientSession>();
 
-/**
- * WebSocket lifecycle
- */
 wss.on("connection", (ws) => {
   const clientId = nanoid(12);
-  connections.set(clientId, ws);
+
+  const client: ClientSession = {
+    id: clientId,
+    ws,
+    role: "none",
+  };
+
+  clients.set(clientId, client);
 
   ws.on("message", (raw) => {
     let data: any;
@@ -26,70 +28,101 @@ wss.on("connection", (ws) => {
     }
 
     /**
-     * HOST cria sala
+     * CREATE ROOM (HOST)
      */
     if (data.type === "create-room") {
+      if (client.role !== "none") return;
+
       const room = roomManager.createRoom(clientId);
 
-      ws.send(
-        JSON.stringify({
-          type: "room-created",
-          roomId: room.id,
-        }),
-      );
+      client.role = "host";
+      client.roomId = room.id;
+
+      ws.send(JSON.stringify({ type: "room-created", roomId: room.id }));
       return;
     }
 
     /**
-     * CONTROLLER entra na sala
+     * JOIN ROOM (CONTROLLER)
      */
     if (data.type === "join-room") {
-      const room = roomManager.getRoom(data.roomId);
+      if (client.role !== "none") return;
 
-      if (!room) {
-        ws.send(JSON.stringify({ type: "error", message: "Sala não existe" }));
+      const result = roomManager.joinRoom(data.roomId, client.id);
+      if (!result) {
+        ws.send(
+          JSON.stringify({ type: "error", message: "Sala cheia ou inválida" }),
+        );
         return;
       }
 
-      if (room.controllers.size >= room.maxPlayers) {
-        ws.send(JSON.stringify({ type: "error", message: "Sala cheia" }));
-        return;
-      }
+      const { room, playerId, rejoinToken } = result;
 
-      const playerId = room.controllers.size + 1;
-      room.controllers.set(clientId, playerId);
+      client.role = "controller";
+      client.roomId = room.id;
+      client.playerId = playerId;
+      client.rejoinToken = rejoinToken;
 
       ws.send(
         JSON.stringify({
           type: "joined-room",
           playerId,
+          rejoinToken,
         }),
       );
 
-      const hostWs = connections.get(room.hostId);
-      hostWs?.send(
-        JSON.stringify({
-          type: "player-joined",
-          playerId,
-        }),
-      );
+      const host = clients.get(room.hostId);
+      host?.ws.send(JSON.stringify({ type: "player-joined", playerId }));
+
       return;
     }
 
     /**
-     * INPUT → relay para host
+     * REJOIN ROOM
+     */
+    if (data.type === "rejoin-room") {
+      if (client.role !== "none") return;
+
+      const result = roomManager.tryRejoin(
+        data.roomId,
+        data.rejoinToken,
+        client.id,
+      );
+
+      if (!result) {
+        ws.send(JSON.stringify({ type: "error", message: "Rejoin inválido" }));
+        return;
+      }
+
+      client.role = "controller";
+      client.roomId = data.roomId;
+      client.playerId = result.playerId;
+      client.rejoinToken = data.rejoinToken;
+
+      ws.send(
+        JSON.stringify({
+          type: "rejoined-room",
+          playerId: result.playerId,
+        }),
+      );
+
+      return;
+    }
+
+    /**
+     * INPUT
      */
     if (data.type === "input") {
-      const room = roomManager.findRoomByController(clientId);
+      if (client.role !== "controller" || !client.roomId) return;
+
+      const room = roomManager.findRoomByClientId(client.id);
       if (!room) return;
 
-      const playerId = room.controllers.get(clientId);
-      const hostWs = connections.get(room.hostId);
-
-      hostWs?.send(
+      const host = clients.get(room.hostId);
+      host?.ws.send(
         JSON.stringify({
           type: "input",
-          playerId,
+          playerId: client.playerId,
           payload: data.payload,
         }),
       );
@@ -97,51 +130,35 @@ wss.on("connection", (ws) => {
   });
 
   /**
-   * Cleanup
+   * DISCONNECT
    */
   ws.on("close", () => {
-    connections.delete(clientId);
+    clients.delete(clientId);
 
-    // Host caiu → remove sala
-    for (const room of [...((roomManager as any).rooms?.values?.() ?? [])]) {
-      if (room.hostId === clientId) {
-        roomManager.removeRoom(room.id);
-        return;
-      }
+    if (client.role === "host" && client.roomId) {
+      roomManager.removeRoom(client.roomId);
+      return;
     }
 
-    // Controller caiu
-    const result = roomManager.removeController(clientId);
-    if (result) {
-      const { room, playerId } = result;
-      const hostWs = connections.get(room.hostId);
+    if (client.role === "controller" && client.roomId && client.rejoinToken) {
+      const room = roomManager.getRoom(client.roomId);
+      if (!room) return;
 
-      hostWs?.send(
+      roomManager.disconnectController(client.roomId, client.rejoinToken);
+
+      const host = clients.get(room.hostId);
+      host?.ws.send(
         JSON.stringify({
           type: "player-left",
-          playerId,
+          playerId: client.playerId,
         }),
       );
     }
   });
 });
 
-/**
- * Heartbeat (produção)
- */
-setInterval(() => {
-  wss.clients.forEach((ws: any) => {
-    if (ws.isAlive === false) return ws.terminate();
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, 30000);
-
-wss.on("connection", (ws: any) => {
-  ws.isAlive = true;
-  ws.on("pong", () => {
-    ws.isAlive = true;
-  });
-});
+export function handleConnection(ws: any) {
+  wss.emit("connection", ws);
+}
 
 console.log(`🚀 WS Relay Server running on port ${PORT}`);

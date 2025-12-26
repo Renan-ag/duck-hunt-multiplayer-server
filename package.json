@@ -7,10 +7,12 @@
   "scripts": {
     "dev": "tsx src/server.ts",
     "build": "node build.mjs",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test": "vitest"
   },
   "dependencies": {
     "nanoid": "^5.1.6",
+    "vitest": "^4.0.16",
     "ws": "^8.18.3"
   },
   "devDependencies": {
